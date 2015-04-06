@@ -281,14 +281,17 @@
     var yValPixels = [];
 
     for( var i = 0; i < recents.length; i++ ) {
-			if( response[ recents[ i ] ].gas === latest.gas ) {
+			var entry = response[ recents [ i ] ];
+			var pt = entry.point + '-' + entry.location;
+			var latestPt = latest.point + '-' + latest.location;
+			if( pt === latestPt ) {
 	      // width = 300, 1000 ms, 60 s
 	      var pxPerMin = 300 / MAX_AGE;
-	      var minutesAgo = ( dateNow - Date.parse( response[ recents[ i ] ].date ) ) / 60000;
+	      var minutesAgo = ( dateNow - Date.parse( entry.date ) ) / 60000;
 	      xValPixels.push( 320 - pxPerMin * minutesAgo  );
-	      yVals.push( parseFloat( response[ recents[ i ] ].reading ) );
+	      yVals.push( parseFloat( entry.reading ) );
 			} else {
-				warn( "More than one gas has been detected.");
+				warn( "Gas detected at more than one point.<br>Only latest point graphed.");
 			}
     }
 
