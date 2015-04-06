@@ -76,9 +76,8 @@
   var RED = '#ff0000',
       YELLOW = '#ffd200',
       GREEN = '#bed600';
-	var dateNow = new Date();
-  //var dateNow = new Date( '2015-03-26T20:10:00Z' );
-	dateNow.setMinutes( dateNow.getMinutes() - dateNow.getTimezoneOffset() );
+	var dateNow = new Date( Date.now() );
+  //var dateNow = new Date( '2015-04-06T10:59:00-05:00' );
   var logFileName = dateNow.toISOString().substring( 0, 10 ) + '.txt';
   document.getElementById( 'raw' ).href = logFileName;
   var rooms = {
@@ -198,7 +197,10 @@
     main.innerHTML = message;
   };
   var warn = function( warning ) {
-    document.getElementById( 'warning' ).innerHTML = '<br>Warning: ' + warning + '<br>';
+		var warnDiv = document.getElementById( 'warning' );
+		if( !warnDiv.innerHTML.match( warning ) ) {
+	    warnDiv.innerHTML += '<br>Warning: ' + warning + '<br>';
+		}
   }
 
   var getLogFile = function( fileName, callback ) {
@@ -227,9 +229,9 @@
     var logEntries = response.split( dateStr );  // '2000-12-31T'
     for( var i = logEntries.length - 1; i > -1; i-- ) {
 			var entry = logEntries[ i ];
-      var timeStamp = new Date( dateStr + entry.substring( 0, 8 ) );
-      var entryRegExp = /(\d?\.?\d+)\ (PP[BM])\ (\S{3,10})\ {3}(PT\d)-(RM\d{3}\s[\w\s]{10})/g;
-			var alarmRegExp = /(ALARM LEV) \d (PT\d)-(RM\d{3} [\w\s]{10})\s+(\d+) (PP[BM]) (\S{3,10})/g;
+      var timeStamp = new Date( dateStr + entry.substring( 0, 8 ) + '-05:00' );
+      var entryRegExp = /(\d*\.?\d+)\ (PP[BM])\ (\S{3,10})\ {1,3}(PT\d)-(RM\d{3}\s[\w\s]{10})/g;
+			var alarmRegExp = /(ALARM LEV) \d (PT\d)-(RM\d{3} [\w\s]{10})\s+(\d*\.?\d+) (PP[BM]) (\S{3,10})/g;
       while( matchArr = entryRegExp.exec( entry ) || alarmRegExp.exec( entry ) ) {
 				if( matchArr[ 1 ] === 'ALARM LEV' ) {
 					var reading = matchArr[ 4 ];
@@ -244,17 +246,13 @@
 					var point = matchArr[ 4 ];
 					var loc = matchArr[ 5 ];
 				}
-        var timeStr = timeStamp.toISOString().substring( 10, 19 ).replace( /:/g, '' );
+        var timeStr = timeStamp.toISOString().substring( 10, 16 ).replace( /:/g, '' );
         var jsonKey = timeStr + '_' + point + '-' + loc;
-        while( logJSON[ jsonKey ] ) {
-          timeStamp.setTime( timeStamp.getTime() - 5000 );
-          timeStr = timeStamp.toISOString().substring( 10, 19 ).replace( /:/g, '' );
-          jsonKey = timeStr + '_' + point + '_' + loc;
-        }
-        if( logCounter[ timeStamp ] ) {
-          logCounter[ timeStamp ] += 1;
+
+        if( logCounter[ timeStr ] ) {
+          logCounter[ timeStr ] += 1;
         } else {
-          logCounter[ timeStamp ] = 1;
+          logCounter[ timeStr ] = 1;
         }
 
         logJSON[ jsonKey ] = {
@@ -283,11 +281,15 @@
     var yValPixels = [];
 
     for( var i = 0; i < recents.length; i++ ) {
-      // width = 300, 1000 ms, 60 s
-      var pxPerMin = 300 / MAX_AGE;
-      var minutesAgo = ( dateNow - Date.parse( response[ recents[ i ] ].date ) ) / 60000;
-      xValPixels.push( 320 - pxPerMin * minutesAgo  );
-      yVals.push( parseFloat( response[ recents[ i ] ].reading ) );
+			if( response[ recents[ i ] ].gas === latest.gas ) {
+	      // width = 300, 1000 ms, 60 s
+	      var pxPerMin = 300 / MAX_AGE;
+	      var minutesAgo = ( dateNow - Date.parse( response[ recents[ i ] ].date ) ) / 60000;
+	      xValPixels.push( 320 - pxPerMin * minutesAgo  );
+	      yVals.push( parseFloat( response[ recents[ i ] ].reading ) );
+			} else {
+				warn( "More than one gas has been detected.");
+			}
     }
 
     var yMax = Math.max.apply( null, yVals );
@@ -319,7 +321,7 @@
         // explicit alarm level entries have one reading
 				// other alarm entries have four readings
       } else {
-      	warn( 'Some data appears to be missing' );
+      	warn( 'Some data appears to be missing.' );
       }
     }
   };
@@ -327,7 +329,7 @@
   var makeReport = function() {
     getLogFile( logFileName, function( response ) {
 			if( response.empty ) {
-				// leave status at default unkown state
+				// leave status at default unknown state
 				return;
 			}
       var allEntries = [];
@@ -342,7 +344,7 @@
       }
 
 			if( allEntries.length === 0 ) {
-        setStatus( 'No Recent Alarms', GREEN, 'There have been no alarms in the past ' + MAX_AGE + ' minutes.' );
+        setStatus( 'No Recent Alarms', GREEN, 'There have been no alarms in the<br>past ' + MAX_AGE + ' minutes.' );
 				return;
 			}
 

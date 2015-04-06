@@ -17,7 +17,7 @@
 
 /*
   RegExp Rules:
-    (\d?\.?\d+)							# capture 1: float or int reading
+    (\d*\.?\d+)							# capture 1: float or int reading
     \s											# one space
     (PP[BM])								# capture 2: PPM or PPB unit
     \s											# one space
@@ -32,7 +32,7 @@
 		-												# hyphen
 		(RM\d{3} [\w\s]{10})		# capture 3: room number and location
 		\s+											# variable number of spaces
-		(\d?\.?\d+)							# capture 4: float or int reading
+		(\d*\.?\d+)							# capture 4: float or int reading
 		\s											# one space
 		(PP[BM])								# capture 5: PPM or PPB unit
 	 	\s											# one space
