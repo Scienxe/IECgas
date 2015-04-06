@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>IEC Gas Monitor</title>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style type="text/css">
+    body,
+    h1,
+    h2,
+    p,
+    #graphContainer,
+    #warning {
+      width: 100%;
+      max-width: 400px;
+      margin: 0px;
+      padding: 0px;
+      font-family: sans-serif;
+      font-weight: 400;
+      font-size: 100%;
+      line-height: 1.5em;
+    }
+    body {
+      margin: 0px auto;
+      padding: 0 0 1em 0;
+      text-align: center;
+    }
+    h1 {
+      margin-bottom: 0.5em;
+      font-size: 1.25em;
+      color: #ffd200;
+      background-color: #00539f;
+    }
+    h2 {
+      margin-bottom: 0.5em;
+      font-size: 1.5em;
+      background-color: #ffd200;
+    }
+    #main {
+      margin-bottom: 1em;
+    }
+    #warning {
+      margin-bottom: 1em;
+      color: #f00;
+    }
+    #raw {
+      margin-top: 1em;
+      padding: 0.5em;
+      color: #fff;
+      background-color: #00539f;
+      border-radius: 6px;
+      text-decoration: none;
+    }
+    #graphContainer {
+      margin-bottom: 1em;
+      padding: 0px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>IEC Gas Monitor</h1>
+  <h2 id="alert">Status Unknown</h2>
+  <p id="main">Data failed to load.</p>
+  <div id="graphContainer"></div>
+  <div id="warning"></div>
+  <p><a href="" id="raw">View raw log files</a></p>
+
+
+  <script type="text/javascript">
+  var svgNS = "http://www.w3.org/2000/svg";
+  var alertHeader = document.getElementById( 'alert' );
+  var main = document.getElementById( 'main' );
+  var MAX_AGE = 20; // minutes into the past to look
+  var REFRESH_RATE = 60; // seconds
+  var RED = '#ff0000',
+      YELLOW = '#ffd200',
+      GREEN = '#bed600';
+	var dateNow = new Date();
+  //var dateNow = new Date( '2015-03-26T20:10:00Z' );
+	dateNow.setMinutes( dateNow.getMinutes() - dateNow.getTimezoneOffset() );
+  var logFileName = dateNow.toISOString().substring( 0, 10 ) + '.txt';
+  document.getElementById( 'raw' ).href = logFileName;
+  var rooms = {
+    "134": "Electrodeposition Lab",
+    "135": "Gas Detector Closet",
+    "141": "Blue Room",
+    "142": "Selenization Lab",
+    "149": "CVD Lab"
+  };
+  var locations = {
+		"PT1": {
+			"RM141  MC SYSTEM": {"room": "141", "loc": "MC System" },
+			"RM141        AIR": {"room": "141", "loc": "Air" },
+			"RM142 H2SE SYSTM": {"room": "142", "loc": "Reactor Enclosure" },
+			"RM149        AIR": {"room": "149", "loc": "Air" }
+		},
+		"PT2": {
+			"RM141        AIR": {"room": "141", "loc": "Air" },
+			"RM141    GAS MAN": {"room": "141", "loc": "Gas Manifold" },
+			"RM142        AIR": {"room": "142", "loc": "Air" },
+			"RM149        AIR": {"room": "149", "loc": "Air" }
+		},
+		"PT3": {
+			"RM135        AIR": {"room": "135", "loc": "Air" },
+			"RM141    GAS MAN": {"room": "141", "loc": "Gas Manifold" },
+			"RM142     GASCAB": {"room": "142", "loc": "Gas Cabinet" },
+			"RM149 HW SYSTEM ": {"room": "149", "loc": "HW System" }
+		},
+		"PT4": {
+			"RM134        AIR": {"room": "134", "loc": "Air" },
+			"RM135        AIR": {"room": "135", "loc": "Air" },
+			"RM141 MC SYSTEM ": {"room": "141", "loc": "MC System" },
+			"RM142     GASCAB": {"room": "142", "loc": "Gas Cabinet" }
+		}
+  };
+
+  var makeSVGcanvas = function() {
+    var container = document.getElementById( 'graphContainer' );
+    container.innerHTML = '';
+    var svgCanvas = document.createElementNS( svgNS, 'svg' );
+    svgCanvas.setAttribute( 'xmlns', 'http://www.w3.org/2000/svg' );
+    svgCanvas.setAttribute( 'version', '1.1' );
+    svgCanvas.setAttribute( 'id', 'svgContainer' );
+    var translator = document.createElementNS( svgNS, 'g' );
+    translator.setAttributeNS( null, 'transform', 'translate( 0.5, 0.5 )' );
+    translator.setAttributeNS( null, 'id', 'svgGraph' );
+    svgCanvas.appendChild( translator );
+
+    svgCanvas.setAttribute( 'width', '320px' );
+    svgCanvas.setAttribute( 'height', '240px' );
+    svgCanvas.setAttribute( 'font-family', 'sans-serif' );
+
+    container.appendChild( svgCanvas );
+
+    return document.getElementById( 'svgGraph' );
+  };
+  var makeSVGline = function( x1, y1, x2, y2, color ) {
+    color = typeof( color ) === 'undefined' ? 'black' : color;
+    var line = document.createElementNS( svgNS, 'line' );
+    line.setAttributeNS( null, 'x1', Math.round( 1000 * x1 ) / 1000 );
+    line.setAttributeNS( null, 'y1', Math.round( 1000 * y1 ) / 1000 );
+    line.setAttributeNS( null, 'x2', Math.round( 1000 * x2 ) / 1000 );
+    line.setAttributeNS( null, 'y2', Math.round( 1000 * y2 ) / 1000 );
+    line.setAttributeNS( null, 'style', 'stroke: ' + color + '; stroke-width: 1;' );
+    return line;
+  };
+  var makeSVGpolyLine = function( polyStr, color ) {
+    color = typeof( color ) === 'undefined' ? 'black' : color;
+    var line = document.createElementNS( svgNS, 'polyline' );
+    line.setAttributeNS( null, 'points', polyStr );
+    line.setAttributeNS( null, 'style', 'stroke: ' + color + '; stroke-width: 1; fill: none;' );
+    return line;
+  }
+  var makeSVGcirc = function( x, y, r, color ) {
+    color = typeof( color ) === 'undefined' ? 'black' : color;
+    var dataPt = document.createElementNS( svgNS, 'circle' );
+    dataPt.setAttribute( 'cx', x );
+    dataPt.setAttribute( 'cy', y );
+    dataPt.setAttribute( 'r', r );
+    dataPt.setAttributeNS( null, 'style', 'stroke: white; fill: ' + color + ';' );
+    return dataPt;
+  }
+  var makeSVGtext = function( text, x, y, size, anchor, color ) {
+    color = typeof( color ) === 'undefined' ? 'black' : color;
+    var tNode = document.createElementNS( svgNS, 'text' );
+    tNode.setAttributeNS( null, 'x', x );
+    tNode.setAttributeNS( null, 'y', y );
+    tNode.setAttributeNS( null, 'font-size', size + 'px' );
+    tNode.setAttributeNS( null, 'style', 'dominant-baseline: middle; text-anchor: ' + anchor + '; fill: ' + color + ';' );
+    tNode.appendChild( document.createTextNode( text ) );
+    return tNode;
+  }
+  var drawSVGaxes = function( yAxisLabel, yMax ) {
+    var svgGraph = document.getElementById( 'svgGraph' );
+
+    svgGraph.appendChild( makeSVGline( 20, 180, 320, 180 ) );   // x Axis
+    svgGraph.appendChild( makeSVGline( 20, 0, 20, 180 ) );      // y Axis
+
+    svgGraph.appendChild( makeSVGtext( 'minutes', 170, 195, 12, 'middle' ) );
+    svgGraph.appendChild( makeSVGtext( '-' + MAX_AGE, 20, 195, 12, 'middle' ) );
+    svgGraph.appendChild( makeSVGtext( 'now', 315, 195, 12, 'end' ) );
+    svgGraph.appendChild( makeSVGtext( '0', 10, 180, 12, 'middle' ) );
+    
+    var yMaxValue = makeSVGtext( yMax, 10, 10, 12, 'middle' );
+    yMaxValue.setAttributeNS( null, 'style', 'dominant-baseline: top; text-anchor: middle;' );
+    svgGraph.appendChild( yMaxValue );
+
+    var yLabel = makeSVGtext( yAxisLabel, 10, 90, 12, 'middle' );
+    yLabel.setAttributeNS( null, 'transform',  'rotate( -90 10 90 )' );
+    svgGraph.appendChild( yLabel );
+
+  };
+
+  var setStatus = function( stat, alertColor, message ) {
+    alertHeader.innerHTML = stat;
+    alertHeader.style.backgroundColor = alertColor;
+    main.innerHTML = message;
+  };
+  var warn = function( warning ) {
+    document.getElementById( 'warning' ).innerHTML = '<br>Warning: ' + warning + '<br>';
+  }
+
+  var getLogFile = function( fileName, callback ) {
+    var xhr = new XMLHttpRequest();
+    xhr.open( 'GET', fileName, true );
+    xhr.responseType = "blob";
+    xhr.onload = function( e ) {
+      if( xhr.response ) {
+        var reader = new FileReader();
+        reader.addEventListener( 'loadend', function() {
+          callback( parseLogFileToJSON( reader.result ) );
+        } );
+        reader.addEventListener( 'error', function() {
+          setStatus( 'Status Unknown', YELLOW, 'Error fetching data' );
+        } );
+        reader.readAsText( xhr.response );       
+      }
+    }
+    xhr.send( null );
+  };
+
+  var parseLogFileToJSON = function( response ) {
+    var logJSON = {};
+    var logCounter = {};
+    var dateStr = dateNow.toISOString().substring( 0, 11 )
+    var logEntries = response.split( dateStr );  // '2000-12-31T'
+    for( var i = logEntries.length - 1; i > -1; i-- ) {
+			var entry = logEntries[ i ];
+      var timeStamp = new Date( dateStr + entry.substring( 0, 8 ) );
+      var entryRegExp = /(\d?\.?\d+)\ (PP[BM])\ (\S{3,10})\ {3}(PT\d)-(RM\d{3}\s[\w\s]{10})/g;
+			var alarmRegExp = /(ALARM LEV) \d (PT\d)-(RM\d{3} [\w\s]{10})\s+(\d+) (PP[BM]) (\S{3,10})/g;
+      while( matchArr = entryRegExp.exec( entry ) || alarmRegExp.exec( entry ) ) {
+				if( matchArr[ 1 ] === 'ALARM LEV' ) {
+					var reading = matchArr[ 4 ];
+					var unit = matchArr[ 5 ];
+					var gas = matchArr[ 6 ];
+					var point = matchArr[ 2 ];
+					var loc = matchArr[ 3 ];
+				} else {
+					var reading = matchArr[ 1 ];
+					var unit = matchArr[ 2 ];
+					var gas = matchArr[ 3 ];
+					var point = matchArr[ 4 ];
+					var loc = matchArr[ 5 ];
+				}
+        var timeStr = timeStamp.toISOString().substring( 10, 19 ).replace( /:/g, '' );
+        var jsonKey = timeStr + '_' + point + '-' + loc;
+        while( logJSON[ jsonKey ] ) {
+          timeStamp.setTime( timeStamp.getTime() - 5000 );
+          timeStr = timeStamp.toISOString().substring( 10, 19 ).replace( /:/g, '' );
+          jsonKey = timeStr + '_' + point + '_' + loc;
+        }
+        if( logCounter[ timeStamp ] ) {
+          logCounter[ timeStamp ] += 1;
+        } else {
+          logCounter[ timeStamp ] = 1;
+        }
+
+        logJSON[ jsonKey ] = {
+          "date": timeStamp.toISOString(),
+          "room": locations[ point ][ loc ].room,
+          "gas": gas,
+          "reading": reading,
+          "unit": unit,
+          "location": loc,
+          "point": point
+        }
+      }
+    }
+    logJSON.logCounter = logCounter;
+		if( /404/.exec( response ) ) {
+			logJSON.empty = true;
+		}
+		return logJSON;
+  };
+
+  var makeGraph = function( response, recents ) {
+    var svgGraph = makeSVGcanvas();
+    var latest = response[ recents[ recents.length - 1 ] ];
+    var xValPixels = [];
+    var yVals = [];
+    var yValPixels = [];
+
+    for( var i = 0; i < recents.length; i++ ) {
+      // width = 300, 1000 ms, 60 s
+      var pxPerMin = 300 / MAX_AGE;
+      var minutesAgo = ( dateNow - Date.parse( response[ recents[ i ] ].date ) ) / 60000;
+      xValPixels.push( 320 - pxPerMin * minutesAgo  );
+      yVals.push( parseFloat( response[ recents[ i ] ].reading ) );
+    }
+
+    var yMax = Math.max.apply( null, yVals );
+		yMax += Math.ceil( 0.05 * yMax );
+    for( var i = 0; i < yVals.length; i++ ) {
+      yValPixels.push( 180 - 180 * ( yVals[ i ] / yMax ) );
+    }
+
+    var polyLineStr = '';
+    for( var i = 0; i < xValPixels.length; i++ ) {
+      svgGraph.appendChild( makeSVGcirc( xValPixels[ i ], yValPixels[ i ], 3 ) );
+      polyLineStr += xValPixels[ i ] + ',' + yValPixels[ i ] + ' ';
+    }
+    svgGraph.appendChild( makeSVGpolyLine( polyLineStr ) );
+
+    svgGraph.appendChild( makeSVGline( 20, 217, 36, 217 ) );
+    svgGraph.appendChild( makeSVGtext( latest.gas, 44, 217, 12, 'start' ) );
+    
+    //svgGraph.appendChild( makeSVGline( 20, 235, 36, 235, 'red' ) );
+    //svgGraph.appendChild( makeSVGtext( 'IDLH', 44, 235, 12, 'start', 'red' ) );
+    
+    drawSVGaxes( latest.unit, Math.ceil( yMax ) );
+    
+  };
+
+  var checkDataComplete = function( logCounter ) {
+    for( key in logCounter ) {
+      if( logCounter[ key ] == 4 || logCounter[ key ] == 1 ) {
+        // explicit alarm level entries have one reading
+				// other alarm entries have four readings
+      } else {
+      	warn( 'Some data appears to be missing' );
+      }
+    }
+  };
+
+  var makeReport = function() {
+    getLogFile( logFileName, function( response ) {
+			if( response.empty ) {
+				// leave status at default unkown state
+				return;
+			}
+      var allEntries = [];
+      var recentAlarms = [];
+      var isRecentAlarm,
+          missingData;
+
+      for( var key in response ) {
+        if( key !== 'logCounter' ) {
+          allEntries.push( key );
+        }
+      }
+
+			if( allEntries.length === 0 ) {
+        setStatus( 'No Recent Alarms', GREEN, 'There have been no alarms in the past ' + MAX_AGE + ' minutes.' );
+				return;
+			}
+
+      var recentEntries = allEntries.filter( function( key ){
+        var age = dateNow - Date.parse( response[ key ].date );
+        return age <= ( MAX_AGE * 60 * 1000 ) && response[ key ].reading > 0;
+      } );
+      recentEntries.sort();     // chronological order
+      var latest = response[ recentEntries[ recentEntries.length - 1 ] ];
+
+      for( var i = 0; i < recentEntries.length; i++ ) {
+        var reading = parseFloat( response[ recentEntries[ i ] ].reading );
+        // is reading NaN?
+        if( reading > 0 ) {
+          // detections in past MAX_AGE minutes
+          recentAlarms.push( recentEntries[ i ] );
+          isRecentAlarm = true;
+        }
+      }
+      if( recentAlarms.length === 0 && allEntries.length > 0 ) {
+        isRecentAlarm = false;
+      }
+
+      if( isRecentAlarm === false ) {
+        setStatus( 'No Recent Alarms', GREEN, 'There have been no alarms in the past ' + MAX_AGE + ' minutes.' );
+      } else {
+        var gas = latest.gas.replace( /(\d?\.?\d)\s?/g, function( gas, match ) {
+          return '<sub>' + match + '</sub>';
+        } );
+
+        var room = rooms[ latest.room ] ? rooms[ latest.room ] : '';
+        var loc = locations[ latest.point ][ latest.location ].loc ? locations[ latest.point ][ latest.location ].loc : '';
+        if( isRecentAlarm === true && ( latest.reading === 0 || latest.reading === 0.0) ) {
+          var msg = gas + ' has been detected in<br>Room ' + latest.room + ': ' + room + ',<br>' + loc + '<br>within the past ' + MAX_AGE + ' minutes.';
+          setStatus( 'Recent Alarms', YELLOW, msg );
+        } else {
+          var age = Math.round( ( dateNow - Date.parse( latest.date ) ) / 60000 );
+          var msg = 'Latest non-zero reading:<br>' + latest.reading + ' ' + latest.unit + ' ' + gas + '<br>detected ' + age + ' minutes ago<br>in Room ' + latest.room + ': ' + room + ',<br>' + loc; 
+          setStatus( gas + ' Detected', RED, msg );
+        }
+
+        makeGraph( response, recentAlarms );
+        checkDataComplete( response.logCounter );
+      }
+      return response;
+    } );
+    window.setTimeout( makeReport, 60000 );
+  }
+
+  makeReport();
+
+  </script>
+</body>
+</html>
